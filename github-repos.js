@@ -28,6 +28,7 @@
         applied: "data-github-readme-first-applied",
         repositorySection: "data-github-repository-section",
         filesVisible: "data-github-files-visible",
+        active: "data-github-readme-first-active",
     };
 
     let scheduledTimer = null;
@@ -43,15 +44,20 @@
         console.warn("[GitHub README First]", ...args);
     }
 
-    function isRepositoryCodePage() {
+    function isRepositoryRootPage() {
         const parts = location.pathname.split("/").filter(Boolean);
-
-        if (parts.length === 2) {
-            return true;
-        }
-
-        return parts.length >= 4 && parts[2] === "tree";
+        return parts.length === 2;
     }
+
+    function updateActiveState() {
+        if (isRepositoryRootPage()) {
+            document.documentElement.setAttribute(ATTRIBUTES.active, "");
+        } else {
+            document.documentElement.removeAttribute(ATTRIBUTES.active);
+        }
+    }
+
+    updateActiveState();
 
     /*
      * This CSS is installed at document-start.
@@ -68,35 +74,31 @@
         style.id = IDS.styles;
 
         style.textContent = `
-      /*
-       * Hide the inner table immediately as a fallback while its complete
-       * wrapper is being identified.
-       */
-      ${SELECTORS.repositoryTable}:not(
-        [${ATTRIBUTES.filesVisible}="true"]
-      ) {
+      html[${ATTRIBUTES.active}]
+        ${SELECTORS.repositoryTable}:not(
+          [${ATTRIBUTES.filesVisible}="true"]
+        ) {
         display: none !important;
       }
 
-      /*
-       * Hide the complete repository section. This removes all of its layout
-       * space before the browser paints the page.
-       */
-      [${ATTRIBUTES.repositorySection}="true"]:not(
-        [${ATTRIBUTES.filesVisible}="true"]
-      ) {
+      html[${ATTRIBUTES.active}]
+        [${ATTRIBUTES.repositorySection}="true"]:not(
+          [${ATTRIBUTES.filesVisible}="true"]
+        ) {
         display: none !important;
       }
 
-      [${ATTRIBUTES.repositorySection}="true"][
-        ${ATTRIBUTES.filesVisible}="true"
-      ] {
+      html[${ATTRIBUTES.active}]
+        [${ATTRIBUTES.repositorySection}="true"][
+          ${ATTRIBUTES.filesVisible}="true"
+        ] {
         display: revert !important;
       }
 
-      ${SELECTORS.repositoryTable}[
-        ${ATTRIBUTES.filesVisible}="true"
-      ] {
+      html[${ATTRIBUTES.active}]
+        ${SELECTORS.repositoryTable}[
+          ${ATTRIBUTES.filesVisible}="true"
+        ] {
         display: revert !important;
       }
 
@@ -208,7 +210,7 @@
      * marking the full wrapper here prevents the empty wrapper from appearing.
      */
     function hideRepositorySectionImmediately() {
-        if (!isRepositoryCodePage()) {
+        if (!isRepositoryRootPage()) {
             return null;
         }
 
@@ -317,7 +319,7 @@
     }
 
     function customizePage() {
-        if (!isRepositoryCodePage()) {
+        if (!isRepositoryRootPage()) {
             document.getElementById(IDS.button)?.remove();
             return;
         }
@@ -393,6 +395,7 @@
         if (pathChanged) {
             currentPath = location.pathname;
 
+            updateActiveState();
             document.getElementById(IDS.button)?.remove();
         }
 
