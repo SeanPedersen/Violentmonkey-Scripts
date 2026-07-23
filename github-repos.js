@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GitHub README First
 // @namespace    local.github.customizations
-// @version      1.4.0
-// @description  Hides repository files by default and adds a toggle to GitHub's repository top bar.
+// @version      1.5.0
+// @description  Hides repository files without layout shift and adds a toggle to GitHub's repository top bar.
 // @match        https://github.com/*/*
 // @grant        none
 // @run-at       document-start
@@ -22,7 +22,6 @@
     const IDS = {
         button: "github-repository-files-toggle",
         styles: "github-readme-first-styles",
-        earlyStyles: "github-readme-first-early-styles",
     };
 
     const ATTRIBUTES = {
@@ -32,6 +31,7 @@
     };
 
     let scheduledTimer = null;
+    let currentPath = location.pathname;
 
     function log(...args) {
         if (DEBUG) {
@@ -43,52 +43,23 @@
         console.warn("[GitHub README First]", ...args);
     }
 
-    /*
-     * Hide the repository table immediately at document-start.
-     *
-     * This rule is inserted before GitHub paints the page, preventing the file
-     * list from briefly appearing and then disappearing.
-     */
-    function addEarlyStyles() {
-        if (document.getElementById(IDS.earlyStyles)) {
-            return;
-        }
-
-        const style = document.createElement("style");
-        style.id = IDS.earlyStyles;
-
-        style.textContent = `
-      ${SELECTORS.repositoryTable}:not(
-        [${ATTRIBUTES.filesVisible}="true"]
-      ) {
-        display: none !important;
-      }
-
-      ${SELECTORS.repositoryTable}[
-        ${ATTRIBUTES.filesVisible}="true"
-      ] {
-        display: revert !important;
-      }
-    `;
-
-        (document.head || document.documentElement).appendChild(style);
-    }
-
-    addEarlyStyles();
-
     function isRepositoryCodePage() {
         const parts = location.pathname.split("/").filter(Boolean);
 
-        // https://github.com/owner/repository
         if (parts.length === 2) {
             return true;
         }
 
-        // https://github.com/owner/repository/tree/branch-or-path
         return parts.length >= 4 && parts[2] === "tree";
     }
 
-    function addMainStyles() {
+    /*
+     * This CSS is installed at document-start.
+     *
+     * The important part is that the complete repository section is hidden as
+     * soon as JavaScript marks it—not only GitHub's inner file table.
+     */
+    function addStyles() {
         if (document.getElementById(IDS.styles)) {
             return;
         }
@@ -97,15 +68,23 @@
         style.id = IDS.styles;
 
         style.textContent = `
-      #${IDS.button} {
-        flex-shrink: 0;
-        white-space: nowrap;
-        margin-left: 8px;
+      /*
+       * Hide the inner table immediately as a fallback while its complete
+       * wrapper is being identified.
+       */
+      ${SELECTORS.repositoryTable}:not(
+        [${ATTRIBUTES.filesVisible}="true"]
+      ) {
+        display: none !important;
       }
 
-      [${ATTRIBUTES.repositorySection}="true"][
-        ${ATTRIBUTES.filesVisible}="false"
-      ] {
+      /*
+       * Hide the complete repository section. This removes all of its layout
+       * space before the browser paints the page.
+       */
+      [${ATTRIBUTES.repositorySection}="true"]:not(
+        [${ATTRIBUTES.filesVisible}="true"]
+      ) {
         display: none !important;
       }
 
@@ -114,10 +93,26 @@
       ] {
         display: revert !important;
       }
+
+      ${SELECTORS.repositoryTable}[
+        ${ATTRIBUTES.filesVisible}="true"
+      ] {
+        display: revert !important;
+      }
+
+      #${IDS.button} {
+        box-sizing: border-box;
+        flex: 0 0 auto;
+        align-self: center;
+        white-space: nowrap;
+        margin: 0 0 0 8px;
+      }
     `;
 
         (document.head || document.documentElement).appendChild(style);
     }
+
+    addStyles();
 
     function lowestCommonAncestor(first, second) {
         const ancestors = new Set();
@@ -142,12 +137,6 @@
         return null;
     }
 
-    /*
-     * Returns the direct child beneath `parent` that contains `element`.
-     *
-     * This lets us operate on the complete repository section instead of only
-     * hiding GitHub's inner file table.
-     */
     function directChildWithin(element, parent) {
         let node = element;
 
@@ -156,6 +145,108 @@
         }
 
         return node;
+    }
+
+    /*
+     * Finds the complete repository wrapper using its relationship to the README.
+     */
+    function identifySections() {
+        const repositoryTable = document.querySelector(
+            SELECTORS.repositoryTable
+        );
+
+        const readmeBox = document.querySelector(
+            SELECTORS.readme
+        );
+
+        if (!repositoryTable || !readmeBox) {
+            return null;
+        }
+
+        const commonParent = lowestCommonAncestor(
+            repositoryTable,
+            readmeBox
+        );
+
+        if (!commonParent) {
+            return null;
+        }
+
+        const repositorySection = directChildWithin(
+            repositoryTable,
+            commonParent
+        );
+
+        const readmeSection = directChildWithin(
+            readmeBox,
+            commonParent
+        );
+
+        if (
+            !repositorySection ||
+            !readmeSection ||
+            repositorySection === readmeSection ||
+            repositorySection.contains(readmeSection) ||
+            readmeSection.contains(repositorySection)
+        ) {
+            return null;
+        }
+
+        return {
+            repositoryTable,
+            readmeBox,
+            commonParent,
+            repositorySection,
+            readmeSection,
+        };
+    }
+
+    /*
+     * Runs synchronously from the MutationObserver callback.
+     *
+     * MutationObserver callbacks execute before the browser's next paint, so
+     * marking the full wrapper here prevents the empty wrapper from appearing.
+     */
+    function hideRepositorySectionImmediately() {
+        if (!isRepositoryCodePage()) {
+            return null;
+        }
+
+        const sections = identifySections();
+
+        if (!sections) {
+            return null;
+        }
+
+        const {
+            repositoryTable,
+            repositorySection,
+        } = sections;
+
+        if (
+            !repositorySection.hasAttribute(
+                ATTRIBUTES.repositorySection
+            )
+        ) {
+            repositorySection.setAttribute(
+                ATTRIBUTES.repositorySection,
+                "true"
+            );
+
+            repositorySection.setAttribute(
+                ATTRIBUTES.filesVisible,
+                "false"
+            );
+
+            repositoryTable.setAttribute(
+                ATTRIBUTES.filesVisible,
+                "false"
+            );
+
+            log("Repository section hidden before paint.");
+        }
+
+        return sections;
     }
 
     function setFilesVisible(
@@ -193,19 +284,23 @@
 
         button.id = IDS.button;
         button.type = "button";
-        button.className = "Button Button--secondary Button--small";
-        button.textContent = "Show repository files";
-        button.setAttribute("aria-expanded", "false");
+        button.className =
+            "Button Button--secondary Button--small";
+
+        const currentlyVisible =
+            repositorySection.getAttribute(
+                ATTRIBUTES.filesVisible
+            ) === "true";
 
         setFilesVisible(
             repositorySection,
             repositoryTable,
             button,
-            false
+            currentlyVisible
         );
 
         button.addEventListener("click", () => {
-            const currentlyVisible =
+            const visible =
                 repositorySection.getAttribute(
                     ATTRIBUTES.filesVisible
                 ) === "true";
@@ -214,134 +309,60 @@
                 repositorySection,
                 repositoryTable,
                 button,
-                !currentlyVisible
+                !visible
             );
         });
 
         return button;
     }
 
-    function restoreButtonIfMissing(
-        repositoryTable,
-        topBar
-    ) {
-        if (document.getElementById(IDS.button)) {
-            return;
-        }
-
-        const repositorySection = document.querySelector(
-            `[${ATTRIBUTES.repositorySection}="true"]`
-        );
-
-        if (!repositorySection) {
-            return;
-        }
-
-        const button = createToggleButton(
-            repositorySection,
-            repositoryTable
-        );
-
-        topBar.appendChild(button);
-    }
-
     function customizePage() {
         if (!isRepositoryCodePage()) {
+            document.getElementById(IDS.button)?.remove();
             return;
         }
 
-        addMainStyles();
-
-        const repositoryTable = document.querySelector(
-            SELECTORS.repositoryTable
-        );
-
-        const readmeBox = document.querySelector(
-            SELECTORS.readme
-        );
+        const sections =
+            hideRepositorySectionImmediately();
 
         const topBar = document.querySelector(
             SELECTORS.topBar
         );
 
-        log("Repository table:", repositoryTable);
-        log("README:", readmeBox);
-        log("Top bar:", topBar);
-
-        if (!repositoryTable || !readmeBox || !topBar) {
+        if (!sections || !topBar) {
             return;
         }
 
-        /*
-         * GitHub may rerender the top bar independently during client-side
-         * navigation. Recreate the button when the page is already customized.
-         */
-        if (readmeBox.hasAttribute(ATTRIBUTES.applied)) {
-            restoreButtonIfMissing(repositoryTable, topBar);
-            return;
-        }
-
-        const commonParent = lowestCommonAncestor(
+        const {
             repositoryTable,
-            readmeBox
-        );
-
-        if (!commonParent) {
-            warn(
-                "Could not find a shared parent for the repository files and README."
-            );
-            return;
-        }
-
-        const repositorySection = directChildWithin(
-            repositoryTable,
-            commonParent
-        );
-
-        const readmeSection = directChildWithin(
             readmeBox,
-            commonParent
-        );
-
-        log("Common parent:", commonParent);
-        log("Repository section:", repositorySection);
-        log("README section:", readmeSection);
-
-        if (
-            !repositorySection ||
-            !readmeSection ||
-            repositorySection === readmeSection ||
-            repositorySection.contains(readmeSection) ||
-            readmeSection.contains(repositorySection)
-        ) {
-            warn(
-                "Could not safely separate the repository and README sections."
-            );
-            return;
-        }
+            commonParent,
+            repositorySection,
+            readmeSection,
+        } = sections;
 
         /*
-         * Keep the repository section in its original position above the README.
-         *
-         * When hidden, the README moves upward naturally. When toggled open, the
-         * repository files appear above the README, matching GitHub's normal layout.
+         * Keep the repository section in its original location above the README.
+         * It occupies no space while collapsed.
          */
-        commonParent.insertBefore(
-            repositorySection,
+        if (
+            repositorySection.nextElementSibling !==
             readmeSection
-        );
+        ) {
+            commonParent.insertBefore(
+                repositorySection,
+                readmeSection
+            );
+        }
 
-        repositorySection.setAttribute(
-            ATTRIBUTES.repositorySection,
-            "true"
-        );
+        if (!document.getElementById(IDS.button)) {
+            const button = createToggleButton(
+                repositorySection,
+                repositoryTable
+            );
 
-        const button = createToggleButton(
-            repositorySection,
-            repositoryTable
-        );
-
-        topBar.appendChild(button);
+            topBar.appendChild(button);
+        }
 
         readmeBox.setAttribute(
             ATTRIBUTES.applied,
@@ -356,26 +377,47 @@
 
         scheduledTimer = window.setTimeout(
             customizePage,
-            150
+            50
         );
     }
 
     /*
-     * Run as soon as the initial DOM becomes available.
+     * Observe immediately at document-start.
+     *
+     * First, synchronously identify and hide the complete repository wrapper.
+     * Then schedule the less urgent button insertion.
      */
-    if (document.readyState === "loading") {
-        document.addEventListener(
-            "DOMContentLoaded",
-            scheduleCustomization,
-            { once: true }
-        );
-    } else {
-        scheduleCustomization();
-    }
+    const observer = new MutationObserver(() => {
+        const pathChanged = currentPath !== location.pathname;
+
+        if (pathChanged) {
+            currentPath = location.pathname;
+
+            document.getElementById(IDS.button)?.remove();
+        }
+
+        const sections =
+            hideRepositorySectionImmediately();
+
+        if (
+            sections &&
+            !document.getElementById(IDS.button)
+        ) {
+            scheduleCustomization();
+        }
+    });
+
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+    });
 
     /*
-     * GitHub uses client-side navigation.
+     * Handle pages where enough DOM already exists when the script initializes.
      */
+    hideRepositorySectionImmediately();
+    scheduleCustomization();
+
     document.addEventListener(
         "turbo:load",
         scheduleCustomization
@@ -385,29 +427,4 @@
         "pjax:end",
         scheduleCustomization
     );
-
-    /*
-     * Handle partial React rerenders, including replacement of the repository
-     * top bar or file table.
-     */
-    new MutationObserver(() => {
-        if (!isRepositoryCodePage()) {
-            return;
-        }
-
-        const buttonMissing =
-            !document.getElementById(IDS.button);
-
-        const customizationMissing =
-            !document.querySelector(
-                `[${ATTRIBUTES.applied}]`
-            );
-
-        if (buttonMissing || customizationMissing) {
-            scheduleCustomization();
-        }
-    }).observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-    });
 })();
