@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GitHub README First
 // @namespace    local.github.customizations
-// @version      1.7.0
-// @description  Hides repository files without layout shift and adds a toggle to GitHub's repository top bar.
+// @version      1.8.0
+// @description  Hides repository files without layout shift, adds a toggle to GitHub's repository top bar and moves Languages below About in the sidebar.
 // @match        https://github.com/*/*
 // @grant        none
 // @run-at       document-start
@@ -19,6 +19,8 @@
                 readme: "article.markdown-body",
                 latestCommitDetails: '[data-testid="latest-commit-details"]',
                 topBar: "button:has(.octicon-code)",
+                sidebarSection: '[class*="borderGrid"] > [class*="sidebarSection"]',
+                sidebarHeading: ":scope > h2",
         };
 
     const IDS = {
@@ -32,9 +34,13 @@
         filesVisible: "data-github-files-visible",
         active: "data-github-readme-first-active",
         latestCommitRow: "data-github-latest-commit-row",
+        sidebarSection: "data-github-sidebar-section",
     };
 
     const FOLDER_ICON_SVG = `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z"/></svg>`;
+
+    /* Sidebar sections listed here are pulled to the top, in this order. */
+    const SIDEBAR_PRIORITY = ["About", "Languages"];
 
     let scheduledTimer = null;
     let currentPath = location.pathname;
@@ -123,6 +129,12 @@
         display: revert !important;
       }
 
+      ${SIDEBAR_PRIORITY.map((heading, index) => `
+      html[${ATTRIBUTES.active}]
+        [${ATTRIBUTES.sidebarSection}="${heading}"] {
+        order: ${index - SIDEBAR_PRIORITY.length};
+      }`).join("")}
+
       #${IDS.button} {
         box-sizing: border-box;
         flex: 0 0 auto;
@@ -187,6 +199,31 @@
         }
 
         return node;
+    }
+
+    /*
+     * Tags prioritized sidebar sections by heading text (GitHub offers no stable
+     * hook). The sidebar is a CSS grid, so CSS `order` reorders them without
+     * moving React-managed nodes.
+     */
+    function markSidebarSections() {
+        if (!isRepositoryRootPage()) {
+            return;
+        }
+
+        for (const section of document.querySelectorAll(SELECTORS.sidebarSection)) {
+            if (section.hasAttribute(ATTRIBUTES.sidebarSection)) {
+                continue;
+            }
+
+            const heading = section
+                .querySelector(SELECTORS.sidebarHeading)
+                ?.textContent.trim();
+
+            if (SIDEBAR_PRIORITY.includes(heading)) {
+                section.setAttribute(ATTRIBUTES.sidebarSection, heading);
+            }
+        }
     }
 
     /*
@@ -465,6 +502,8 @@
             document.getElementById(IDS.button)?.remove();
         }
 
+        markSidebarSections();
+
         const sections =
             hideRepositorySectionImmediately();
 
@@ -484,6 +523,7 @@
     /*
      * Handle pages where enough DOM already exists when the script initializes.
      */
+    markSidebarSections();
     hideRepositorySectionImmediately();
     scheduleCustomization();
 
