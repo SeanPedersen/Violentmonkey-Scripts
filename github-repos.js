@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub README First
 // @namespace    local.github.customizations
-// @version      1.6.0
+// @version      1.7.0
 // @description  Hides repository files without layout shift and adds a toggle to GitHub's repository top bar.
 // @match        https://github.com/*/*
 // @grant        none
@@ -17,6 +17,7 @@
                 // GitHub no longer ships "X-module__Box__hash" classes; match stable parts only.
                 repositoryTable: 'table[class*="OverviewTable"]',
                 readme: "article.markdown-body",
+                latestCommitDetails: '[data-testid="latest-commit-details"]',
                 topBar: "button:has(.octicon-code)",
         };
 
@@ -30,6 +31,7 @@
         repositorySection: "data-github-repository-section",
         filesVisible: "data-github-files-visible",
         active: "data-github-readme-first-active",
+        latestCommitRow: "data-github-latest-commit-row",
     };
 
     const FOLDER_ICON_SVG = `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z"/></svg>`;
@@ -84,11 +86,27 @@
         display: none !important;
       }
 
+      /* Fallback: no latest-commit row found, hide the whole section. */
       html[${ATTRIBUTES.active}]
         [${ATTRIBUTES.repositorySection}="true"]:not(
           [${ATTRIBUTES.filesVisible}="true"]
-        ) {
+        ):not(:has(> [${ATTRIBUTES.latestCommitRow}])) {
         display: none !important;
+      }
+
+      /* Keep the latest-commit row visible, hide everything else. */
+      html[${ATTRIBUTES.active}]
+        [${ATTRIBUTES.repositorySection}="true"]:not(
+          [${ATTRIBUTES.filesVisible}="true"]
+        ) > :not([${ATTRIBUTES.latestCommitRow}]) {
+        display: none !important;
+      }
+
+      html[${ATTRIBUTES.active}]
+        [${ATTRIBUTES.repositorySection}="true"]:not(
+          [${ATTRIBUTES.filesVisible}="true"]
+        ) > [${ATTRIBUTES.latestCommitRow}] {
+        border-radius: var(--borderRadius-medium, 6px) !important;
       }
 
       html[${ATTRIBUTES.active}]
@@ -169,6 +187,27 @@
         }
 
         return node;
+    }
+
+    /*
+     * Marks the section's direct child holding the latest-commit summary so CSS
+     * can keep it visible while the file table is collapsed.
+     */
+    function markLatestCommitRow(repositorySection) {
+        if (repositorySection.querySelector(`:scope > [${ATTRIBUTES.latestCommitRow}]`)) {
+            return;
+        }
+
+        const details = repositorySection.querySelector(
+            SELECTORS.latestCommitDetails
+        );
+
+        if (!details) {
+            return;
+        }
+
+        directChildWithin(details, repositorySection)
+            .setAttribute(ATTRIBUTES.latestCommitRow, "");
     }
 
     /*
@@ -269,6 +308,8 @@
 
             log("Repository section hidden before paint.");
         }
+
+        markLatestCommitRow(repositorySection);
 
         return sections;
     }
